@@ -1,0 +1,240 @@
+import streamlit as st
+import random
+import time
+
+# --- 캐릭터 및 몬스터 클래스 정의 ---
+class Character:
+    def __init__(self, name, max_hp, attack_power):
+        self.name = name
+        self.max_hp = max_hp
+        self.hp = max_hp
+        self.attack_power = attack_power
+        self.level = 1
+        self.exp = 0
+        self.exp_to_level_up = 20
+        self.gold = 0
+        self.items = {"heal_potion": 5, "magic_scroll": 0}
+        self.scroll_ready = False
+        self.class_type = None
+        self.energy = 0
+        self.reflect_mode = False
+        self.stun_next_turn = False
+
+    def attack(self, target):
+        base = self.attack_power
+        if self.scroll_ready:
+            base *= 4
+            st.markdown("💥 **마법 스크롤의 힘이 발동되어 강력한 공격을 날립니다!**")
+            self.scroll_ready = False
+        damage = random.randint(base - 2, base + 2)
+        target.take_damage(damage)
+        return f"{self.name}가 {target.name}에게 **{damage}의 데미지**를 입혔습니다!"
+
+    def heal(self):
+        heal_amount = random.randint(30, 50)
+        self.hp = min(self.hp + heal_amount, self.max_hp)
+        return f"{self.name}가 **{heal_amount}만큼 회복**했습니다! (현재 체력: {self.hp})"
+
+    def use_skill(self, target, skill_choice):
+        if self.energy < 3:
+            return "⚠️ 에너지가 부족합니다!"
+
+        self.energy -= 3
+
+        if self.class_type == "mage":
+            if skill_choice == "아이스볼":
+                damage = int(self.attack_power * 1.5)
+                target.take_damage(damage)
+                msg = f"❄️ 아이스볼! {target.name}에게 {damage}의 피해!"
+                if random.random() < 0.5:
+                    target.stun_next_turn = True
+                    msg += "\n🌨️ 적이 얼어붙어 다음 공격을 실패할 수 있습니다!"
+                return msg
+            elif skill_choice == "익스플로전":
+                damage = int(self.attack_power * 2)
+                target.take_damage(damage)
+                msg = f"💥 익스플로전! {target.name}에게 {damage}의 피해!"
+                if random.random() < 0.25:
+                    bonus = int(self.attack_power * 1.5)
+                    target.take_damage(bonus)
+                    msg += f"\n🔥 추가 폭발! {bonus}의 추가 피해!"
+                return msg
+
+        elif self.class_type == "warrior":
+            if skill_choice == "가시방패":
+                self.reflect_mode = True
+                return "🛡️ 가시방패를 들고 대기합니다. 이번 턴 적 공격 반사! (자동 적용)"
+            elif skill_choice == "이판사판태클":
+                damage = int(self.attack_power * 4)
+                self_damage = int(self.attack_power * 0.25)
+                target.take_damage(damage)
+                self.hp -= self_damage
+                return f"🤜 이판사판태클! {target.name}에게 {damage} 피해! 자신은 {self_damage} 피해!"
+        return "❓ 알 수 없는 스킬"
+
+    def gain_exp(self, amount):
+        self.exp += amount
+        level_up_text = f"🎉 {self.name}가 {amount} 경험치를 획득했습니다! ({self.exp}/{self.exp_to_level_up})\n"
+        if self.exp >= self.exp_to_level_up:
+            self.level += 1
+            self.exp -= self.exp_to_level_up
+            self.exp_to_level_up = int(self.exp_to_level_up * 1.5)
+            self.max_hp += 10
+            self.attack_power += 3
+            self.hp = self.max_hp
+            level_up_text += f"✨ **레벨 업!** {self.name}는 레벨 {self.level}이 되었습니다!"
+        return level_up_text
+
+    def gain_gold(self, amount):
+        self.gold += amount
+        return f"💰 {amount} 골드를 획득했습니다! (보유 골드: {self.gold})"
+
+    def take_damage(self, amount):
+        self.hp -= amount
+
+    def is_alive(self):
+        return self.hp > 0
+
+
+class Monster(Character):
+    def __init__(self, floor):
+        name = random.choice(["고블린", "슬라임", "늑대", "해골 전사", "불의 정령", "어둠의 기사"])
+        max_hp = 30 + floor * 5
+        attack_power = 8 + floor // 2
+        super().__init__(f"{floor}층의 {name}", max_hp, attack_power)
+        self.exp_reward = 10 + floor * 2
+        self.gold_reward = random.randint(50, 100)
+
+
+class BossMonster(Monster):
+    def __init__(self, floor, name, nickname, speech, gimmick=None):
+        super().__init__(floor)
+        self.name = f"{floor}층 보스 [{nickname}] {name}"
+        self.hp = 150 + floor * 10
+        self.max_hp = self.hp
+        self.attack_power = 20 + floor // 2
+        self.exp_reward = 50 + floor * 3
+        self.gold_reward = 200 + floor * 5
+        self.speech = speech
+        self.gimmick = gimmick
+        self.turns = 0
+
+    def take_damage(self, amount):
+        if self.gimmick == "sans":
+            self.turns += 1
+            if self.turns <= 20:
+                st.markdown("샌즈는 피하지 않았다... 하지만 공격이 아무 효과가 없다!")
+            else:
+                st.markdown("당신의 공격이 샌즈에게 명중했다!")
+                self.hp = 0
+        else:
+            self.hp -= amount
+
+    def special_attack(self, player):
+        if self.gimmick == "stun_every_3_turns" and self.turns % 3 == 0:
+            player.stun_next_turn = True
+            return f"{self.name}의 특수 공격! {player.name}이(가) 기절했습니다!"
+        return ""
+
+
+def create_enemy(floor):
+    if floor == 10:
+        return BossMonster(10, "블러드 레이븐", "핏빛 참격자", "크아하하하! 내 검은 피를 원한다면, 네 피부터 흘려야겠지!", gimmick="stun_every_3_turns")
+    elif floor == 20:
+        return BossMonster(20, "섀도우 리퍼", "어둠의 절단자", "빛 따위는... 내 검 앞에선 무의미하다.", gimmick="stun_every_3_turns")
+    elif floor == 30:
+        return BossMonster(30, "샌즈", "마지막 탑의 수호자", "정말 아름다운 날이야.\n새들은 지저귀고, 꽃들은 피어나고...\n이런 날엔, 너 같은 꼬마들은...\n(눈동자가 사라지며)지옥에서 불타고 있어야 하는데.", gimmick="sans")
+    else:
+        return Monster(floor)
+
+
+# --- 상태 초기화 ---
+def init_game():
+    st.session_state.player = Character("용사", 100, 15)
+    st.session_state.floor = 1
+    st.session_state.enemy = create_enemy(1)
+    st.session_state.log = []
+    st.session_state.game_over = False
+    st.session_state.shop_mode = False
+    st.session_state.skill_mode = False
+
+# --- Streamlit UI ---
+st.title("🏯 30층 탑 정복 RPG")
+
+if "player" not in st.session_state:
+    init_game()
+
+player = st.session_state.player
+enemy = st.session_state.enemy
+
+# --- 전투 상황 출력 ---
+st.markdown(f"**{player.name}** - HP: {player.hp}/{player.max_hp}, Lv.{player.level}, 에너지: {player.energy}")
+st.markdown(f"**{enemy.name}** - HP: {enemy.hp}/{enemy.max_hp}")
+
+# --- 로그 출력 ---
+for log in st.session_state.log[-5:]:
+    st.markdown(log)
+
+# --- 행동 선택 ---
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    if st.button("⚔️ 공격"):
+        if not player.stun_next_turn:
+            st.session_state.log.append(player.attack(enemy))
+        else:
+            st.session_state.log.append("⚠️ 당신은 기절해서 아무 행동도 못했습니다!")
+            player.stun_next_turn = False
+
+with col2:
+    if st.button("🎒 아이템"):
+        if player.items["heal_potion"] > 0:
+            player.items["heal_potion"] -= 1
+            st.session_state.log.append(player.heal())
+        else:
+            st.session_state.log.append("❌ 물약이 없습니다!")
+
+with col3:
+    if player.class_type:
+        skill = st.selectbox("🧪 스킬 선택", ["아이스볼", "익스플로전"] if player.class_type == "mage" else ["가시방패", "이판사판태클"])
+        if st.button("🔮 스킬 사용"):
+            result = player.use_skill(enemy, skill)
+            st.session_state.log.append(result)
+
+# --- 적 턴 ---
+if enemy.is_alive():
+    if isinstance(enemy, BossMonster):
+        enemy.turns += 1
+        boss_msg = enemy.special_attack(player)
+        if boss_msg:
+            st.session_state.log.append(boss_msg)
+
+    if not enemy.stun_next_turn:
+        damage = random.randint(enemy.attack_power - 2, enemy.attack_power + 2)
+        player.take_damage(damage)
+        st.session_state.log.append(f"👿 {enemy.name}이(가) {player.name}에게 {damage} 피해를 입혔습니다!")
+    else:
+        st.session_state.log.append(f"❄️ {enemy.name}이(가) 얼어붙어 공격하지 못했습니다!")
+        enemy.stun_next_turn = False
+
+player.energy += 1
+
+# --- 전투 결과 체크 ---
+if not enemy.is_alive():
+    st.success(f"🎉 {enemy.name} 격파!")
+    st.session_state.log.append(player.gain_exp(enemy.exp_reward))
+    st.session_state.log.append(player.gain_gold(enemy.gold_reward))
+    st.session_state.floor += 1
+
+    if st.session_state.floor > 30:
+        st.balloons()
+        st.markdown("🏆 **축하합니다! 30층을 모두 클리어했습니다!**")
+        st.stop()
+
+    st.session_state.enemy = create_enemy(st.session_state.floor)
+    st.markdown(f"➡️ **{st.session_state.floor}층으로 이동합니다...**")
+
+if not player.is_alive():
+    st.error("💀 당신은 쓰러졌습니다... 게임 오버.")
+    if st.button("🔁 다시 시작"):
+        init_game()
